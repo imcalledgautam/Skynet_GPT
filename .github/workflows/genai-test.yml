@@ -1,4 +1,4 @@
-name: GenAI Test Platform - Self-Contained
+name: GenAI Test Platform - Simple
 on:
   push:
     branches: [ main, master ]
@@ -23,88 +23,42 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov coverage requests pyyaml
+          pip install pytest pytest-cov coverage requests
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
+
+      - name: Download GenAI Tools
+        run: |
+          echo "📦 Downloading GenAI Test Platform tools..."
+          curl -L https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/llm_agent/enhanced_context_builder.py -o context_builder.py
+          curl -L https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/llm_agent/generate_tests.py -o generate_tests.py
+          curl -L https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/llm_agent/prompt_template.txt -o prompt_template.txt
+          echo "✅ Tools downloaded"
 
       - name: Detect Python Changes
         id: changes
         run: |
           echo "🔍 Detecting changed Python files..."
-          git fetch origin main || git fetch origin master || true
           if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '\.py$' | head -10 || echo "")
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '\.py$' || echo "")
           else
-            CHANGED_FILES=$(find . -name "*.py" -type f | head -10 | tr '\n' ' ')
+            CHANGED_FILES=$(find . -name "*.py" -type f | head -5)
           fi
+          
           if [ -n "$CHANGED_FILES" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
-            echo "📝 Found Python changes: $CHANGED_FILES"
+            echo "📝 Found Python changes"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "⚠️ No Python changes detected"
           fi
 
-      - name: Build Context Bundle
+      - name: Build Context
         if: steps.changes.outputs.has_changes == 'true'
         run: |
-          echo "📋 Building context bundle..."
-          mkdir -p ci_artifacts
-          python3 << 'PYTHON_SCRIPT'
-import os, json, sys
-from datetime import datetime
-
-def build_simple_context():
-    changed_files = os.getenv('CHANGED_FILES', '').split()
-    changed_files = [f for f in changed_files if f and os.path.exists(f)]
-    
-    bundle = {
-        "metadata": {
-            "timestamp": datetime.now().isoformat(),
-            "total_files": len(changed_files),
-            "changed_files": len(changed_files),
-            "repository": os.getcwd()
-        },
-        "files": [],
-        "context": {}
-    }
-    
-    for file_path in changed_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-            bundle["files"].append({
-                "path": file_path,
-                "full_text": content[:15000],
-                "unified_diff": f"Modified: {file_path}"
-            })
-            print(f"✅ Added {file_path} to context")
-        except Exception as e:
-            print(f"⚠️ Could not read {file_path}: {e}")
-    
-    for readme in ['README.md', 'README.rst', 'README.txt']:
-        if os.path.exists(readme):
-            try:
-                with open(readme, 'r') as f:
-                    bundle["context"]["readme"] = f.read()[:2000]
-                break
-            except:
-                pass
-    
-    with open('ci_artifacts/context_bundle.json', 'w') as f:
-        json.dump(bundle, f, indent=2)
-    
-    print(f"✅ Context bundle created with {len(bundle['files'])} files")
-    return len(bundle['files'])
-
-if __name__ == "__main__":
-    count = build_simple_context()
-    sys.exit(0 if count > 0 else 1)
-PYTHON_SCRIPT
-        env:
-          CHANGED_FILES: ${{ steps.changes.outputs.changed_files }}
+          echo "📋 Building context..."
+          python context_builder.py
 
       - name: Install Ollama
         if: steps.changes.outputs.has_changes == 'true'
@@ -112,46 +66,39 @@ PYTHON_SCRIPT
           echo "🤖 Installing Ollama..."
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
-          sleep 10
-          echo "📦 Pulling qwen2.5-coder:1.5b model..."
+          sleep 15
+          echo "📦 Pulling model..."
           ollama pull qwen2.5-coder:1.5b
           echo "✅ Ollama ready"
 
-      - name: Generate Tests with AI
+      - name: Generate Tests
         if: steps.changes.outputs.has_changes == 'true'
         env:
           OLLAMA_MODEL: "qwen2.5-coder:1.5b"
           OLLAMA_HOST: "http://localhost:11434"
         run: |
-          echo "🧠 Generating tests with AI..."
-          curl -L https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/llm_agent/generate_tests.py -o generate_tests.py
-          curl -L https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/llm_agent/prompt_template.txt -o prompt_template.txt
+          echo "🧠 Generating AI tests..."
           mkdir -p tests/generated
-          python generate_tests.py || echo "⚠️ Test generation completed with warnings"
+          python generate_tests.py || echo "⚠️ Generation completed with warnings"
+          
           if [ -d "tests/generated" ]; then
-            TEST_COUNT=$(find tests/generated -name "*.py" -type f 2>/dev/null | wc -l)
+            TEST_COUNT=$(find tests/generated -name "*.py" 2>/dev/null | wc -l)
             echo "✅ Generated $TEST_COUNT test files"
-            find tests/generated -name "*.py" -type f 2>/dev/null | while read file; do
-              echo "  📝 $(basename "$file")"
-            done
-          else
-            echo "⚠️ No tests directory created"
           fi
 
-      - name: Run Tests and Coverage
+      - name: Run Tests
         if: steps.changes.outputs.has_changes == 'true'
         run: |
-          echo "🧪 Running tests with coverage..."
+          echo "🧪 Running tests..."
           mkdir -p reports
-          if [ -d "tests/generated" ] && [ "$(ls -A tests/generated/*.py 2>/dev/null)" ]; then
-            echo "Found generated tests, running pytest..."
+          
+          if [ -d "tests/generated" ] && [ "$(ls tests/generated/*.py 2>/dev/null)" ]; then
             export PYTHONPATH=$PWD:$PYTHONPATH
-            coverage run --source=. -m pytest tests/generated --maxfail=3 --disable-warnings -v || true
+            coverage run --source=. -m pytest tests/generated --disable-warnings -v || true
             coverage report -m | tee reports/coverage.txt
             coverage xml -o reports/coverage.xml
             echo "✅ Tests completed"
           else
-            echo "⚠️ No generated tests to run"
             echo "No tests generated" > reports/coverage.txt
           fi
 
@@ -159,37 +106,24 @@ PYTHON_SCRIPT
         if: steps.changes.outputs.has_changes == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: genai-test-results
+          name: genai-results
           path: |
             tests/generated/
             reports/
-            ci_artifacts/
 
-      - name: Create Summary
+      - name: Summary
         if: steps.changes.outputs.has_changes == 'true'
         run: |
           echo "## 🤖 GenAI Test Platform Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -d "tests/generated" ] && [ "$(ls -A tests/generated/*.py 2>/dev/null)" ]; then
-            TEST_COUNT=$(find tests/generated -name "*.py" -type f 2>/dev/null | wc -l)
-            echo "### ✅ Success" >> $GITHUB_STEP_SUMMARY
-            echo "- **Tests Generated:** $TEST_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -d "tests/generated" ] && [ "$(ls tests/generated/*.py 2>/dev/null)" ]; then
+            TEST_COUNT=$(find tests/generated -name "*.py" 2>/dev/null | wc -l)
+            echo "✅ **Generated $TEST_COUNT AI test files**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📝 Generated Test Files" >> $GITHUB_STEP_SUMMARY
-            find tests/generated -name "*.py" -type f 2>/dev/null | while read file; do
-              echo "- \`$(basename "$file")\`" >> $GITHUB_STEP_SUMMARY
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
-            if [ -f "reports/coverage.txt" ]; then
-              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-              head -20 reports/coverage.txt >> $GITHUB_STEP_SUMMARY
-              echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            fi
+            echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            head -10 reports/coverage.txt >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Coverage data not available"
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ⚠️ No Tests Generated" >> $GITHUB_STEP_SUMMARY
-            echo "This might be because:" >> $GITHUB_STEP_SUMMARY
-            echo "- No significant Python changes detected" >> $GITHUB_STEP_SUMMARY
-            echo "- AI generation encountered issues" >> $GITHUB_STEP_SUMMARY
-            echo "- Repository structure not compatible" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **No tests generated**" >> $GITHUB_STEP_SUMMARY
           fi
