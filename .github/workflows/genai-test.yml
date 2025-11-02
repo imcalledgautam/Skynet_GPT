@@ -162,27 +162,28 @@ jobs:
         run: |
           echo "📊 Creating comprehensive reports..."
           mkdir -p reports
-          cat << 'EOF' > reports/summary.md
-# 🤖 GenAI Test Platform - Execution Report
+          cat > reports/summary.md << 'EOF'
+          # 🤖 GenAI Test Platform - Execution Report
 
-## 📊 Dashboard Overview
-| Metric | Value | Status |
-|--------|--------|--------|
-| Python Files Changed | ${{ steps.changes.outputs.file_count }} | ✅ |
-| Context Files Processed | ${{ steps.context.outputs.context_files }} | ✅ |
-| Context Bundle Size | ${{ steps.context.outputs.context_size }} bytes | ✅ |
-| Ollama Install Time | ${{ steps.ollama.outputs.install_time }}s | ✅ |
-| AI Generation Time | ${{ steps.generate.outputs.generation_time }}s | ✅ |
-| Test Files Generated | ${{ steps.generate.outputs.test_count }} | ✅ |
-| Lines of Test Code | ${{ steps.generate.outputs.test_lines }} | ✅ |
-| Invalid Generations | ${{ steps.generate.outputs.invalid_count }} | ✅ |
-| Total Test Cases | ${{ steps.testing.outputs.total_tests }} | ✅ |
-| Tests Passed | ${{ steps.testing.outputs.passed_tests }} | ✅ |
-| Tests Failed | ${{ steps.testing.outputs.failed_tests }} | ✅ |
-| Code Coverage | ${{ steps.testing.outputs.coverage_percent }}% | ✅ |
-| Test Execution Time | ${{ steps.testing.outputs.test_time }}s | ✅ |
-
-EOF
+          ## 📊 Dashboard Overview
+          EOF
+          
+          echo "| Metric | Value | Status |" >> reports/summary.md
+          echo "|--------|--------|--------|" >> reports/summary.md
+          echo "| Python Files Changed | ${{ steps.changes.outputs.file_count }} | ✅ |" >> reports/summary.md
+          echo "| Context Files Processed | ${{ steps.context.outputs.context_files }} | ✅ |" >> reports/summary.md
+          echo "| Context Bundle Size | ${{ steps.context.outputs.context_size }} bytes | ✅ |" >> reports/summary.md
+          echo "| Ollama Install Time | ${{ steps.ollama.outputs.install_time }}s | ✅ |" >> reports/summary.md
+          echo "| AI Generation Time | ${{ steps.generate.outputs.generation_time }}s | ✅ |" >> reports/summary.md
+          echo "| Test Files Generated | ${{ steps.generate.outputs.test_count }} | ✅ |" >> reports/summary.md
+          echo "| Lines of Test Code | ${{ steps.generate.outputs.test_lines }} | ✅ |" >> reports/summary.md
+          echo "| Invalid Generations | ${{ steps.generate.outputs.invalid_count }} | ✅ |" >> reports/summary.md
+          echo "| Total Test Cases | ${{ steps.testing.outputs.total_tests }} | ✅ |" >> reports/summary.md
+          echo "| Tests Passed | ${{ steps.testing.outputs.passed_tests }} | ✅ |" >> reports/summary.md
+          echo "| Tests Failed | ${{ steps.testing.outputs.failed_tests }} | ✅ |" >> reports/summary.md
+          echo "| Code Coverage | ${{ steps.testing.outputs.coverage_percent }}% | ✅ |" >> reports/summary.md
+          echo "| Test Execution Time | ${{ steps.testing.outputs.test_time }}s | ✅ |" >> reports/summary.md
+          echo "" >> reports/summary.md
 
           echo "## 📁 Generated Files" >> reports/summary.md
           if [ -d "tests/generated" ]; then
@@ -220,6 +221,7 @@ EOF
         run: |
           echo "# 🚀 GenAI Test Platform - Advanced Dashboard" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
           if [ "${{ steps.changes.outputs.has_changes }}" == "true" ]; then
             echo "## 📊 Execution Dashboard" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
@@ -238,6 +240,7 @@ EOF
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "This workflow runs when Python files are modified. No Python changes were detected in this push." >> $GITHUB_STEP_SUMMARY
           fi
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*🤖 Powered by [GenAI Test Platform](https://github.com/imcalledgautam/genai-test-platform) - AI-driven testing for the future*" >> $GITHUB_STEP_SUMMARY
