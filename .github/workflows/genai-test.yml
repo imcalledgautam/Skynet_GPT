@@ -1,0 +1,21 @@
+name: GenAI Test Platform
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  ai-test-generation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - uses: imcalledgautam/genai-test-platform/.github/actions/genai-test-generator@main
+        with:
+          ollama_model: 'qwen2.5-coder:1.5b'
+          python_version: '3.10'
+          coverage_threshold: '70'
