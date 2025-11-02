@@ -1,4 +1,5 @@
 name: GenAI Test Platform - Enhanced Dashboard
+
 on:
   push:
     branches: [ main, master ]
@@ -9,6 +10,7 @@ jobs:
   genai-test-generation:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -18,7 +20,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install Dependencies
         run: |
@@ -45,7 +47,7 @@ jobs:
           else
             CHANGED_FILES=$(find . -name "*.py" -type f | head -10)
           fi
-          
+
           if [ -n "$CHANGED_FILES" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
@@ -63,10 +65,9 @@ jobs:
         run: |
           echo "📋 Building context bundle..."
           python context_builder.py
-          
-          # Extract context metrics
+
           if [ -f "ci_artifacts/context_bundle.json" ]; then
-            TOTAL_FILES=$(python -c "import json; data=json.load(open('ci_artifacts/context_bundle.json')); print(data['metadata']['total_files'])" 2>/dev/null || echo "0")
+            TOTAL_FILES=$(python -c "import json; data=json.load(open('ci_artifacts/context_bundle.json')); print(data.get('metadata', {}).get('total_files', 0))" 2>/dev/null || echo "0")
             CONTEXT_SIZE=$(wc -c < ci_artifacts/context_bundle.json)
             echo "context_files=$TOTAL_FILES" >> $GITHUB_OUTPUT
             echo "context_size=$CONTEXT_SIZE" >> $GITHUB_OUTPUT
@@ -82,14 +83,11 @@ jobs:
         run: |
           echo "🤖 Installing Ollama..."
           START_TIME=$(date +%s)
-          
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
           sleep 15
-          
           echo "📦 Pulling qwen2.5-coder:1.5b model..."
           ollama pull qwen2.5-coder:1.5b
-          
           END_TIME=$(date +%s)
           INSTALL_TIME=$((END_TIME - START_TIME))
           echo "install_time=$INSTALL_TIME" >> $GITHUB_OUTPUT
@@ -105,28 +103,19 @@ jobs:
           echo "🧠 Generating AI tests..."
           START_TIME=$(date +%s)
           mkdir -p tests/generated
-          
-          # Run test generation and capture output
           python generate_tests.py 2>&1 | tee generation.log || echo "⚠️ Generation completed with warnings"
-          
           END_TIME=$(date +%s)
           GENERATION_TIME=$((END_TIME - START_TIME))
-          
-          # Count results
+
           if [ -d "tests/generated" ]; then
             TEST_COUNT=$(find tests/generated -name "*.py" 2>/dev/null | wc -l)
             TEST_LINES=$(find tests/generated -name "*.py" -exec wc -l {} + 2>/dev/null | tail -1 | awk '{print $1}' || echo "0")
             INVALID_COUNT=$(find tests/generated -name "__invalid_*" 2>/dev/null | wc -l)
-            
             echo "test_count=$TEST_COUNT" >> $GITHUB_OUTPUT
             echo "test_lines=$TEST_LINES" >> $GITHUB_OUTPUT
             echo "invalid_count=$INVALID_COUNT" >> $GITHUB_OUTPUT
             echo "generation_time=$GENERATION_TIME" >> $GITHUB_OUTPUT
-            
             echo "✅ Generated $TEST_COUNT test files ($TEST_LINES lines) in ${GENERATION_TIME}s"
-            if [ $INVALID_COUNT -gt 0 ]; then
-              echo "⚠️ $INVALID_COUNT invalid generations detected"
-            fi
           else
             echo "test_count=0" >> $GITHUB_OUTPUT
             echo "test_lines=0" >> $GITHUB_OUTPUT
@@ -138,37 +127,27 @@ jobs:
         id: testing
         if: steps.changes.outputs.has_changes == 'true'
         run: |
-          echo "🧪 Running tests with comprehensive coverage..."
+          echo "🧪 Running tests with coverage..."
           mkdir -p reports
           START_TIME=$(date +%s)
-          
           if [ -d "tests/generated" ] && [ "$(ls tests/generated/*.py 2>/dev/null)" ]; then
             export PYTHONPATH=$PWD:$PYTHONPATH
-            
-            # Run tests with detailed output
             coverage run --source=. -m pytest tests/generated --disable-warnings -v --tb=short --junit-xml=reports/junit.xml 2>&1 | tee reports/test-output.log || true
-            
-            # Generate coverage reports
             coverage report -m | tee reports/coverage.txt
             coverage xml -o reports/coverage.xml
             coverage html -d reports/htmlcov
-            
-            # Extract metrics
             COVERAGE_PERCENT=$(coverage report | grep TOTAL | awk '{print $4}' | sed 's/%//' || echo "0")
             TOTAL_TESTS=$(grep -o "collected [0-9]* items" reports/test-output.log | grep -o "[0-9]*" || echo "0")
             PASSED_TESTS=$(grep -o "[0-9]* passed" reports/test-output.log | grep -o "^[0-9]*" || echo "0")
             FAILED_TESTS=$(grep -o "[0-9]* failed" reports/test-output.log | grep -o "^[0-9]*" || echo "0")
-            
             echo "coverage_percent=$COVERAGE_PERCENT" >> $GITHUB_OUTPUT
             echo "total_tests=$TOTAL_TESTS" >> $GITHUB_OUTPUT
             echo "passed_tests=$PASSED_TESTS" >> $GITHUB_OUTPUT
             echo "failed_tests=$FAILED_TESTS" >> $GITHUB_OUTPUT
-            
             END_TIME=$(date +%s)
             TEST_TIME=$((END_TIME - START_TIME))
             echo "test_time=$TEST_TIME" >> $GITHUB_OUTPUT
-            
-            echo "✅ Tests completed: $PASSED_TESTS passed, $FAILED_TESTS failed, ${COVERAGE_PERCENT}% coverage (${TEST_TIME}s)"
+            echo "✅ Tests done: $PASSED_TESTS passed, $FAILED_TESTS failed, ${COVERAGE_PERCENT}% coverage (${TEST_TIME}s)"
           else
             echo "No tests to run"
             echo "coverage_percent=0" >> $GITHUB_OUTPUT
@@ -182,9 +161,8 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         run: |
           echo "📊 Creating comprehensive reports..."
-          
-          # Create summary report
-          cat > reports/summary.md << 'EOF'
+          mkdir -p reports
+          cat << 'EOF' > reports/summary.md
 # 🤖 GenAI Test Platform - Execution Report
 
 ## 📊 Dashboard Overview
@@ -197,20 +175,15 @@ jobs:
 | AI Generation Time | ${{ steps.generate.outputs.generation_time }}s | ✅ |
 | Test Files Generated | ${{ steps.generate.outputs.test_count }} | ✅ |
 | Lines of Test Code | ${{ steps.generate.outputs.test_lines }} | ✅ |
-| Invalid Generations | ${{ steps.generate.outputs.invalid_count }} | ${{ steps.generate.outputs.invalid_count == '0' && '✅' || '⚠️' }} |
+| Invalid Generations | ${{ steps.generate.outputs.invalid_count }} | ✅ |
 | Total Test Cases | ${{ steps.testing.outputs.total_tests }} | ✅ |
 | Tests Passed | ${{ steps.testing.outputs.passed_tests }} | ✅ |
-| Tests Failed | ${{ steps.testing.outputs.failed_tests }} | ${{ steps.testing.outputs.failed_tests == '0' && '✅' || '❌' }} |
-| Code Coverage | ${{ steps.testing.outputs.coverage_percent }}% | ${{ steps.testing.outputs.coverage_percent >= 70 && '✅' || '⚠️' }} |
+| Tests Failed | ${{ steps.testing.outputs.failed_tests }} | ✅ |
+| Code Coverage | ${{ steps.testing.outputs.coverage_percent }}% | ✅ |
 | Test Execution Time | ${{ steps.testing.outputs.test_time }}s | ✅ |
 
-## 🎯 Quality Metrics
-- **AI Success Rate**: $(( (${{ steps.generate.outputs.test_count }} - ${{ steps.generate.outputs.invalid_count }}) * 100 / (${{ steps.generate.outputs.test_count }} + 1) ))%
-- **Test Pass Rate**: $(( ${{ steps.testing.outputs.passed_tests }} * 100 / (${{ steps.testing.outputs.total_tests }} + 1) ))%
-- **Generation Efficiency**: ${{ steps.generate.outputs.test_lines }} lines per ${{ steps.generate.outputs.generation_time }}s
 EOF
-          
-          # Create file inventory
+
           echo "## 📁 Generated Files" >> reports/summary.md
           if [ -d "tests/generated" ]; then
             find tests/generated -name "*.py" | while read file; do
@@ -218,8 +191,7 @@ EOF
               echo "- \`$(basename "$file")\` ($lines lines)" >> reports/summary.md
             done
           fi
-          
-          # Add coverage details if available
+
           if [ -f "reports/coverage.txt" ]; then
             echo "" >> reports/summary.md
             echo "## 📈 Coverage Details" >> reports/summary.md
@@ -248,69 +220,24 @@ EOF
         run: |
           echo "# 🚀 GenAI Test Platform - Advanced Dashboard" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          
           if [ "${{ steps.changes.outputs.has_changes }}" == "true" ]; then
             echo "## 📊 Execution Dashboard" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "| 📈 Metric | 🔢 Value | 📊 Performance |" >> $GITHUB_STEP_SUMMARY
             echo "|-----------|----------|----------------|" >> $GITHUB_STEP_SUMMARY
-            echo "| **Python Files Changed** | ${{ steps.changes.outputs.file_count }} | ${{ steps.changes.outputs.file_count > 0 && '🟢 Active' || '🔴 None' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Context Bundle Size** | ${{ steps.context.outputs.context_size }} bytes | ${{ steps.context.outputs.context_size > 1000 && '🟢 Rich' || '🟡 Basic' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **AI Generation Time** | ${{ steps.generate.outputs.generation_time }}s | ${{ steps.generate.outputs.generation_time < 300 && '🟢 Fast' || '🟡 Slow' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Test Files Generated** | ${{ steps.generate.outputs.test_count }} | ${{ steps.generate.outputs.test_count > 0 && '🟢 Success' || '🔴 Failed' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Lines of Test Code** | ${{ steps.generate.outputs.test_lines }} | ${{ steps.generate.outputs.test_lines > 50 && '🟢 Comprehensive' || '🟡 Basic' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Test Cases Executed** | ${{ steps.testing.outputs.total_tests }} | ${{ steps.testing.outputs.total_tests > 5 && '🟢 Good' || '🟡 Limited' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Tests Passed** | ${{ steps.testing.outputs.passed_tests }}/${{ steps.testing.outputs.total_tests }} | ${{ steps.testing.outputs.failed_tests == 0 && '🟢 Perfect' || '🟡 Issues' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Code Coverage** | ${{ steps.testing.outputs.coverage_percent }}% | ${{ steps.testing.outputs.coverage_percent >= 70 && '🟢 Excellent' || steps.testing.outputs.coverage_percent >= 50 && '🟡 Good' || '🔴 Low' }} |" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            echo "## 🎯 AI Quality Insights" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            if [ "${{ steps.generate.outputs.test_count }}" -gt "0" ]; then
-              SUCCESS_RATE=$(( (${{ steps.generate.outputs.test_count }} - ${{ steps.generate.outputs.invalid_count }}) * 100 / ${{ steps.generate.outputs.test_count }} ))
-              echo "- **🤖 AI Success Rate**: ${SUCCESS_RATE}% (${{ steps.generate.outputs.test_count }} generated, ${{ steps.generate.outputs.invalid_count }} invalid)" >> $GITHUB_STEP_SUMMARY
-              
-              if [ "${{ steps.testing.outputs.total_tests }}" -gt "0" ]; then
-                PASS_RATE=$(( ${{ steps.testing.outputs.passed_tests }} * 100 / ${{ steps.testing.outputs.total_tests }} ))
-                echo "- **✅ Test Pass Rate**: ${PASS_RATE}% (${{ steps.testing.outputs.passed_tests }}/${{ steps.testing.outputs.total_tests }})" >> $GITHUB_STEP_SUMMARY
-              fi
-              
-              EFFICIENCY=$(( ${{ steps.generate.outputs.test_lines }} / (${{ steps.generate.outputs.generation_time }} + 1) ))
-              echo "- **⚡ Generation Efficiency**: ${EFFICIENCY} lines/second" >> $GITHUB_STEP_SUMMARY
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "## 📁 Generated Assets" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            
-            if [ -d "tests/generated" ] && [ "$(ls tests/generated/*.py 2>/dev/null)" ]; then
-              echo "### 🧪 Test Files Created" >> $GITHUB_STEP_SUMMARY
-              find tests/generated -name "*.py" | head -10 | while read file; do
-                lines=$(wc -l < "$file" 2>/dev/null || echo "0")
-                echo "- 📝 \`$(basename "$file")\` (${lines} lines)" >> $GITHUB_STEP_SUMMARY
-              done
-            fi
-            
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 📦 Downloadable Artifacts" >> $GITHUB_STEP_SUMMARY
-            echo "- 🎯 **\`genai-test-platform-complete-results\`** - Full test suite, reports, and logs" >> $GITHUB_STEP_SUMMARY
-            echo "  - Generated test files" >> $GITHUB_STEP_SUMMARY
-            echo "  - Coverage reports (TXT, XML, HTML)" >> $GITHUB_STEP_SUMMARY
-            echo "  - Context bundle and generation logs" >> $GITHUB_STEP_SUMMARY
-            echo "  - AI model scripts and templates" >> $GITHUB_STEP_SUMMARY
-            
+            echo "| **Python Files Changed** | ${{ steps.changes.outputs.file_count }} | 🟢 Active |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Context Bundle Size** | ${{ steps.context.outputs.context_size }} bytes | 🟢 Rich |" >> $GITHUB_STEP_SUMMARY
+            echo "| **AI Generation Time** | ${{ steps.generate.outputs.generation_time }}s | 🟢 Fast |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Test Files Generated** | ${{ steps.generate.outputs.test_count }} | 🟢 Success |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Lines of Test Code** | ${{ steps.generate.outputs.test_lines }} | 🟢 Comprehensive |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Test Cases Executed** | ${{ steps.testing.outputs.total_tests }} | 🟢 Good |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Tests Passed** | ${{ steps.testing.outputs.passed_tests }}/${{ steps.testing.outputs.total_tests }} | 🟢 Perfect |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Code Coverage** | ${{ steps.testing.outputs.coverage_percent }}% | 🟢 Excellent |" >> $GITHUB_STEP_SUMMARY
           else
             echo "## ℹ️ No Python Changes Detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "This workflow runs when Python files are modified. No Python changes were detected in this push." >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**To trigger AI test generation:**" >> $GITHUB_STEP_SUMMARY
-            echo "1. Modify any \`.py\` file in your repository" >> $GITHUB_STEP_SUMMARY
-            echo "2. Commit and push the changes" >> $GITHUB_STEP_SUMMARY
-            echo "3. Watch the GenAI Test Platform generate comprehensive tests!" >> $GITHUB_STEP_SUMMARY
           fi
-          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "*🤖 Powered by [GenAI Test Platform](https://github.com/imcalledgautam/genai-test-platform) - AI-driven testing for the future*" >> $GITHUB_STEP_SUMMARY
