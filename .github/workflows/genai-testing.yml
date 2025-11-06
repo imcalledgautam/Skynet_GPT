@@ -31,29 +31,30 @@ jobs:
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
-          sleep 10
+          sleep 15
           ollama pull qwen2.5-coder:1.5b
           
       - name: Setup GenAI Platform
         run: |
-          git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai
-          cp -r /tmp/genai/tools ./genai-tools
-          cp -r /tmp/genai/llm_agent ./genai-tools/
-          cd genai-tools && pip install -r ../requirements.txt || pip install pytest requests pathlib2
+          git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai-platform
+          cp -r /tmp/genai-platform/tools .
+          cp -r /tmp/genai-platform/llm_agent .
+          pip install pytest requests pathlib2 coverage
           
       - name: Generate and Run Tests
         run: |
-          export PYTHONPATH="./genai-tools:$PYTHONPATH"
-          cd genai-tools
-          python tools/unified_test_runner.py ${GITHUB_EVENT_INPUTS_FILES:+--files $GITHUB_EVENT_INPUTS_FILES} ${GITHUB_EVENT_INPUTS_AUTO_APPROVE:+--auto-approve}
+          export PYTHONPATH=".:$PYTHONPATH"
+          python tools/unified_test_runner.py \
+            ${{ github.event.inputs.files && format('--files {0}', github.event.inputs.files) || '' }} \
+            ${{ github.event.inputs.auto_approve == 'true' && '--auto-approve' || '' }}
           
       - name: Upload Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
+          name: genai-test-results
           path: |
             tests/
             genai_artifacts/
-            coverage.xml
-            test-results.xml
+            *.xml
+            *.json
