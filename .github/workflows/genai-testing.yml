@@ -63,8 +63,27 @@ jobs:
         run: |
           echo "📥 Cloning GenAI backend tools..."
           git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai-platform
-          cp -r /tmp/genai-platform/tools .
-          cp -r /tmp/genai-platform/llm_agent .
+          
+          echo "📂 Checking cloned directory structure..."
+          ls -la /tmp/genai-platform/
+          
+          echo "📋 Copying tools and agents..."
+          if [ -d "/tmp/genai-platform/tools" ]; then
+            cp -r /tmp/genai-platform/tools .
+            echo "✅ Copied tools directory"
+          else
+            echo "❌ tools directory not found"
+            ls -la /tmp/genai-platform/
+            exit 1
+          fi
+          
+          if [ -d "/tmp/genai-platform/llm_agent" ]; then
+            cp -r /tmp/genai-platform/llm_agent .
+            echo "✅ Copied llm_agent directory"
+          else
+            echo "❌ llm_agent directory not found"
+          fi
+          
           pip install pytest coverage requests pathlib2 || true
           echo "✅ GenAI tools ready"
 
@@ -94,6 +113,12 @@ jobs:
         run: |
           echo "🧠 Generating tests using LLM..."
           mkdir -p tests/generated
+
+          echo "📂 Current directory structure:"
+          ls -la
+          
+          echo "📂 Available tools:"
+          ls -la tools/ || echo "No tools directory found"
 
           export PYTHONPATH=".:$PYTHONPATH"
           python tools/unified_test_runner.py --auto-approve \
@@ -147,7 +172,7 @@ jobs:
         with:
           name: genai-test-results
           path: |
-            tests/generated/
+            tests/
             genai_artifacts/
             reports/
             *.xml
