@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       # --------------------------
-      # 2. SETUP PYTHON ENVIRONMENT (for orchestration)
+      # 2. SETUP PYTHON ENVIRONMENT
       # --------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -57,33 +57,30 @@ jobs:
           echo "✅ Ollama installed successfully"
 
       # --------------------------
-      # 4. CLONE CORE GENAI PLATFORM (shared backend)
+      # 4. SETUP GENAI TOOLS (Alternative approach)
       # --------------------------
-      - name: Clone GenAI Test Backend
+      - name: Setup GenAI Tools
         run: |
-          echo "📥 Cloning GenAI backend tools..."
-          git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai-platform
+          echo "�� Setting up GenAI tools..."
           
-          echo "📂 Checking cloned directory structure..."
-          ls -la /tmp/genai-platform/
+          # Create the tools directory
+          mkdir -p tools
           
-          echo "📋 Copying tools and agents..."
-          if [ -d "/tmp/genai-platform/tools" ]; then
-            cp -r /tmp/genai-platform/tools .
-            echo "✅ Copied tools directory"
-          else
-            echo "❌ tools directory not found"
-            ls -la /tmp/genai-platform/
-            exit 1
-          fi
+          # Download the working unified_test_runner.py directly
+          curl -o tools/unified_test_runner.py https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/tools/unified_test_runner.py
           
-          if [ -d "/tmp/genai-platform/llm_agent" ]; then
-            cp -r /tmp/genai-platform/llm_agent .
-            echo "✅ Copied llm_agent directory"
-          else
-            echo "❌ llm_agent directory not found"
-          fi
+          # Download the context builder
+          curl -o tools/context_builder_v2.py https://raw.githubusercontent.com/imcalledgautam/genai-test-platform/main/tools/context_builder_v2.py
           
+          # Clone and copy llm_agent
+          git clone --depth 1 https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai-platform
+          cp -r /tmp/genai-platform/llm_agent .
+          
+          echo "📂 Verifying tools setup:"
+          ls -la tools/
+          ls -la llm_agent/
+          
+          # Install dependencies
           pip install pytest coverage requests pathlib2 || true
           echo "✅ GenAI tools ready"
 
@@ -91,25 +88,14 @@ jobs:
       # 5. DETECT REPO LANGUAGE
       # --------------------------
       - name: Detect Project Language
-        id: lang
         run: |
           echo "🔍 Detecting primary language..."
-          if ls *.py >/dev/null 2>&1; then
-            echo "language=python" >> $GITHUB_OUTPUT
-          elif ls package.json >/dev/null 2>&1; then
-            echo "language=javascript" >> $GITHUB_OUTPUT
-          elif ls *.java >/dev/null 2>&1; then
-            echo "language=java" >> $GITHUB_OUTPUT
-          else
-            echo "language=generic" >> $GITHUB_OUTPUT
-          fi
-          echo "Detected language: ${{ steps.lang.outputs.language }}"
+          echo "language=python" >> $GITHUB_ENV
 
       # --------------------------
       # 6. GENERATE TEST CASES VIA LLM
       # --------------------------
       - name: Generate AI Test Cases
-        id: generate
         run: |
           echo "🧠 Generating tests using LLM..."
           mkdir -p tests/generated
@@ -118,48 +104,37 @@ jobs:
           ls -la
           
           echo "📂 Available tools:"
-          ls -la tools/ || echo "No tools directory found"
+          ls -la tools/
 
           export PYTHONPATH=".:$PYTHONPATH"
           python tools/unified_test_runner.py --auto-approve \
             || echo "⚠️ AI test generation completed with warnings"
 
           echo "✅ Test generation completed"
+          
+          echo "📁 Generated test files:"
+          find tests/ -name "*.py" -type f | head -10 || echo "No test files generated"
 
       # --------------------------
-      # 7. RUN TESTS BASED ON DETECTED LANGUAGE
+      # 7. RUN TESTS AND COLLECT COVERAGE
       # --------------------------
       - name: Run Tests and Collect Coverage
         if: always()
         run: |
           mkdir -p genai_artifacts reports
 
-          case "${{ steps.lang.outputs.language }}" in
-            python)
-              pip install pytest pytest-cov coverage
-              echo "🔍 Checking for generated tests..."
-              find tests/ -name "*.py" -type f | head -5 || echo "No test files found"
-              pytest tests/ --disable-warnings -v --tb=short \
-                --cov=. --cov-report=xml:reports/coverage.xml --cov-report=term-missing \
-                2>&1 | tee reports/test-results.log || echo "⚠️ Tests completed"
-              ;;
-            javascript)
-              npm install
-              npm test || echo "⚠️ JS test execution finished with warnings"
-              ;;
-            java)
-              if [ -f "pom.xml" ]; then
-                mvn test
-              elif [ -f "build.gradle" ]; then
-                ./gradlew test
-              else
-                echo "⚠️ Java build system not detected"
-              fi
-              ;;
-            *)
-              echo "ℹ️ No language-specific runner available — skipping test execution."
-              ;;
-          esac
+          pip install pytest pytest-cov coverage
+          echo "🔍 Checking for generated tests..."
+          find tests/ -name "*.py" -type f | head -5 || echo "No test files found"
+          
+          if [ -d "tests" ] && [ "$(find tests/ -name '*.py' | wc -l)" -gt 0 ]; then
+            echo "▶️ Running pytest..."
+            pytest tests/ --disable-warnings -v --tb=short \
+              --cov=. --cov-report=xml:reports/coverage.xml --cov-report=term-missing \
+              2>&1 | tee reports/test-results.log || echo "⚠️ Tests completed with warnings"
+          else
+            echo "ℹ️ No test files found to execute"
+          fi
 
           echo "✅ Test execution phase complete"
 
