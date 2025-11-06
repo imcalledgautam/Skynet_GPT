@@ -1,4 +1,4 @@
-name: 🌐 GenAI Test Platform - Universal Test Generation
+name: GenAI Test Generation
 
 on:
   push:
@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       files:
-        description: "Files to test (comma-separated)"
+        description: 'Files to test (comma-separated)'
         required: false
         type: string
       auto_approve:
-        description: "Auto-approve LLM-generated tests"
+        description: 'Auto-approve tests'
         required: false
         type: boolean
         default: false
@@ -20,139 +20,41 @@ on:
 jobs:
   genai-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-
     steps:
-      # --------------------------
-      # 1. CHECKOUT REPO
-      # --------------------------
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      # --------------------------
-      # 2. SETUP PYTHON ENVIRONMENT (for orchestration)
-      # --------------------------
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
-
-      # --------------------------
-      # 3. INSTALL REQUIRED TOOLS
-      # --------------------------
-      - name: Install Ollama + Dependencies
+          python-version: '3.11'
+          
+      - name: Install Ollama
         run: |
-          echo "🔧 Installing base dependencies..."
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq git
-
-          echo "🤖 Installing Ollama..."
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
-          sleep 15
-
-          echo "📦 Pulling model..."
+          sleep 10
           ollama pull qwen2.5-coder:1.5b
-
-          echo "✅ Ollama installed successfully"
-
-      # --------------------------
-      # 4. CLONE CORE GENAI PLATFORM (shared backend)
-      # --------------------------
-      - name: Clone GenAI Test Backend
+          
+      - name: Setup GenAI Platform
         run: |
-          echo "📥 Cloning GenAI backend tools..."
-          git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai-platform
-          cp -r /tmp/genai-platform/llm_agent .
-          cp -r /tmp/genai-platform/utils . || echo "ℹ️ No utils directory found, skipping..."
-          cp -r /tmp/genai-platform/templates . || echo "ℹ️ No templates directory found, skipping..."
-          pip install pytest coverage requests pathlib2 || true
-          echo "✅ GenAI tools ready"
-
-      # --------------------------
-      # 5. DETECT REPO LANGUAGE
-      # --------------------------
-      - name: Detect Project Language
-        id: lang
+          git clone https://github.com/imcalledgautam/genai-test-platform.git /tmp/genai
+          cp -r /tmp/genai/tools ./genai-tools
+          cp -r /tmp/genai/llm_agent ./genai-tools/
+          cd genai-tools && pip install -r ../requirements.txt || pip install pytest requests pathlib2
+          
+      - name: Generate and Run Tests
         run: |
-          echo "🔍 Detecting primary language..."
-          if ls *.py >/dev/null 2>&1; then
-            echo "language=python" >> $GITHUB_OUTPUT
-          elif ls package.json >/dev/null 2>&1; then
-            echo "language=javascript" >> $GITHUB_OUTPUT
-          elif ls *.java >/dev/null 2>&1; then
-            echo "language=java" >> $GITHUB_OUTPUT
-          else
-            echo "language=generic" >> $GITHUB_OUTPUT
-          fi
-          echo "Detected language: ${{ steps.lang.outputs.language }}"
-
-      # --------------------------
-      # 6. GENERATE TEST CASES VIA LLM
-      # --------------------------
-      - name: Generate AI Test Cases
-        id: generate
-        run: |
-          echo "🧠 Generating tests using LLM..."
-          mkdir -p tests/generated
-
-          python llm_agent/generate_tests.py \
-            --repo . \
-            --language "${{ steps.lang.outputs.language }}" \
-            --model "qwen2.5-coder:1.5b" \
-            --auto-approve "${{ github.event.inputs.auto_approve || 'false' }}" \
-            --output tests/generated/ \
-            || echo "⚠️ AI test generation completed with warnings"
-
-          echo "✅ Test generation completed"
-
-      # --------------------------
-      # 7. RUN TESTS BASED ON DETECTED LANGUAGE
-      # --------------------------
-      - name: Run Tests and Collect Coverage
-        if: always()
-        run: |
-          mkdir -p genai_artifacts reports
-
-          case "${{ steps.lang.outputs.language }}" in
-            python)
-              pip install pytest pytest-cov coverage
-              pytest tests/generated --disable-warnings -v --tb=short \
-                --cov=. --cov-report=xml:reports/coverage.xml --cov-report=term-missing \
-                2>&1 | tee reports/test-results.log
-              ;;
-            javascript)
-              npm install
-              npm test || echo "⚠️ JS test execution finished with warnings"
-              ;;
-            java)
-              if [ -f "pom.xml" ]; then
-                mvn test
-              elif [ -f "build.gradle" ]; then
-                ./gradlew test
-              else
-                echo "⚠️ Java build system not detected"
-              fi
-              ;;
-            *)
-              echo "ℹ️ No language-specific runner available — skipping test execution."
-              ;;
-          esac
-
-          echo "✅ Test execution phase complete"
-
-      # --------------------------
-      # 8. UPLOAD RESULTS
-      # --------------------------
-      - name: Upload Test Artifacts
-        if: always()
+          export PYTHONPATH=".:$PYTHONPATH"
+          python tools/unified_test_runner.py \
+            ${{ github.event.inputs.files && format('--files {0}', github.event.inputs.files) || '' }} \
+            ${{ github.event.inputs.auto_approve == 'true' && '--auto-approve' || '' }}
+          
+      - name: Upload Results
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: genai-test-results
+          name: test-results
           path: |
-            tests/generated/
+            tests/
             genai_artifacts/
-            reports/
-            *.xml
-            *.json
-          retention-days: 30
+            coverage.xml
+            test-results.xml
