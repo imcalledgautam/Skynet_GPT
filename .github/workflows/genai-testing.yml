@@ -38,30 +38,46 @@ jobs:
           python-version: "3.10"
 
       # --------------------------
-      # 3. INSTALL REQUIRED TOOLS
+      # 3. INSTALL AND START OLLAMA PROPERLY
       # --------------------------
-      - name: Install Ollama + Dependencies
+      - name: Install and Configure Ollama
         run: |
           echo "🔧 Installing base dependencies..."
-          sudo apt-get update -y
-          sudo apt-get install -y curl jq git
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y curl jq git
 
           echo "🤖 Installing Ollama..."
           curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          sleep 15
 
-          echo "📦 Pulling model..."
+          echo "🚀 Starting Ollama service..."
+          ollama serve &
+          sleep 5
+
+          # Wait for Ollama to be ready
+          echo "⏳ Waiting for Ollama to be ready..."
+          for i in {1..30}; do
+            if curl -f http://localhost:11434/api/tags >/dev/null 2>&1; then
+              echo "✅ Ollama is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
+          echo "📦 Pulling LLM model..."
           ollama pull qwen2.5-coder:1.5b
 
-          echo "✅ Ollama installed successfully"
+          echo "🔍 Verifying Ollama setup..."
+          curl -s http://localhost:11434/api/tags | jq .
+
+          echo "✅ Ollama installed and configured successfully"
 
       # --------------------------
-      # 4. SETUP GENAI TOOLS (Alternative approach)
+      # 4. SETUP GENAI TOOLS
       # --------------------------
       - name: Setup GenAI Tools
         run: |
-          echo "�� Setting up GenAI tools..."
+          echo "📥 Setting up GenAI tools..."
           
           # Create the tools directory
           mkdir -p tools
@@ -85,20 +101,22 @@ jobs:
           echo "✅ GenAI tools ready"
 
       # --------------------------
-      # 5. DETECT REPO LANGUAGE
-      # --------------------------
-      - name: Detect Project Language
-        run: |
-          echo "🔍 Detecting primary language..."
-          echo "language=python" >> $GITHUB_ENV
-
-      # --------------------------
-      # 6. GENERATE TEST CASES VIA LLM
+      # 5. GENERATE TEST CASES VIA LLM
       # --------------------------
       - name: Generate AI Test Cases
         run: |
           echo "🧠 Generating tests using LLM..."
           mkdir -p tests/generated
+
+          echo "🔍 Verifying Ollama is accessible..."
+          curl -s http://localhost:11434/api/tags || {
+            echo "❌ Ollama not accessible, restarting..."
+            pkill ollama || true
+            sleep 2
+            ollama serve &
+            sleep 10
+            ollama pull qwen2.5-coder:1.5b
+          }
 
           echo "📂 Current directory structure:"
           ls -la
@@ -107,6 +125,9 @@ jobs:
           ls -la tools/
 
           export PYTHONPATH=".:$PYTHONPATH"
+          export OLLAMA_HOST="http://localhost:11434"
+          
+          echo "🎯 Running unified test runner with increased timeouts..."
           python tools/unified_test_runner.py --auto-approve \
             || echo "⚠️ AI test generation completed with warnings"
 
@@ -116,7 +137,7 @@ jobs:
           find tests/ -name "*.py" -type f | head -10 || echo "No test files generated"
 
       # --------------------------
-      # 7. RUN TESTS AND COLLECT COVERAGE
+      # 6. RUN TESTS AND COLLECT COVERAGE
       # --------------------------
       - name: Run Tests and Collect Coverage
         if: always()
@@ -139,7 +160,7 @@ jobs:
           echo "✅ Test execution phase complete"
 
       # --------------------------
-      # 8. UPLOAD RESULTS
+      # 7. UPLOAD RESULTS
       # --------------------------
       - name: Upload Test Artifacts
         if: always()
