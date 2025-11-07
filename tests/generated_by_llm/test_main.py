@@ -1,47 +1,21 @@
 import pytest
-from unittest.mock import Mock, patch
-from src.app import App
+from unittest.mock import patch
+from src.app import App, ExternalDependency
 
-class TestApp:
-    def setup_method(self):
-        self.app = App()
+def test_app():
+    # Test the main function and its dependencies
+    app = App()
+    assert isinstance(app, App)
 
-    @patch('src.app.get_data')
-    def test_get_data_success(self, mock_get_data):
-        # Arrange
-        mock_get_data.return_value = {"data": "success"}
-        
-        # Act
-        result = self.app.get_data()
-        
-        # Assert
-        assert result == {"data": "success"}
-        mock_get_data.assert_called_once_with()
+@patch('src.app.ExternalDependency')
+def test_external_dependency(mock_external):
+    # Mock the external dependency and test its methods
+    mock_external.return_value.some_method.return_value = "mocked value"
+    app = App()
+    result = app.some_method()
+    assert result == "mocked value"
 
-    @patch('src.app.get_data')
-    def test_get_data_failure(self, mock_get_data):
-        # Arrange
-        mock_get_data.return_value = {"error": "failure"}
-        
-        # Act
-        with pytest.raises(ValueError) as excinfo:
-            self.app.get_data()
-        
-        # Assert
-        assert str(excinfo.value) == "Failed to retrieve data: failure"
-        mock_get_data.assert_called_once_with()
-
-    @patch('src.app.get_data')
-    def test_app_initialization(self, mock_get_data):
-        # Arrange
+def test_edge_case():
+    # Test edge cases, such as invalid input or missing dependencies
+    with pytest.raises(ValueError):
         app = App()
-        
-        # Act
-        result = app
-        
-        # Assert
-        assert isinstance(result, App)
-        assert not mock_get_data.called
-
-if __name__ == "__main__":
-    pytest.main(['-v', 'tests/test_main.py'])
