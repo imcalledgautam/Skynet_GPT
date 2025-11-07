@@ -1,7 +1,18 @@
-name: Standalone Test Runner
+name: 🧪 Test Runner
 
 on:
   workflow_dispatch:  # Manual trigger
+    inputs:
+      test_directory:
+        description: "Test directory to run (default: tests/)"
+        required: false
+        type: string
+        default: "tests/"
+      coverage_source:
+        description: "Source directory for coverage (default: src/)"
+        required: false
+        type: string
+        default: "src/"
   schedule:
     - cron: '0 2 * * *'  # Daily at 2 AM for regression testing
 
@@ -25,50 +36,131 @@ jobs:
       - name: Check for existing tests
         id: check-tests
         run: |
-          if [ -d "tests/generated" ] && [ "$(ls -A tests/generated/*.py 2>/dev/null)" ]; then
+          TEST_DIR="${{ github.event.inputs.test_directory || 'tests/' }}"
+          echo "🔍 Looking for tests in: $TEST_DIR"
+          
+          # Check multiple possible test locations
+          FOUND_TESTS=false
+          TEST_LOCATIONS=""
+          
+          for dir in "$TEST_DIR" "tests/" "tests/generated/" "tests/generated_by_llm/"; do
+            if [ -d "$dir" ] && [ "$(find "$dir" -name "test_*.py" -o -name "*_test.py" 2>/dev/null)" ]; then
+              FOUND_TESTS=true
+              TEST_LOCATIONS="$TEST_LOCATIONS $dir"
+              echo "✅ Found tests in: $dir"
+              find "$dir" -name "*.py" -type f | head -10
+            fi
+          done
+          
+          if [ "$FOUND_TESTS" = true ]; then
             echo "tests_exist=true" >> $GITHUB_OUTPUT
-            echo "✅ Existing tests found"
-            ls -la tests/generated/
+            echo "test_locations=$TEST_LOCATIONS" >> $GITHUB_OUTPUT
+            echo "✅ Tests found and ready to run"
           else
             echo "tests_exist=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No existing tests found"
+            echo "⚠️ No test files found in any location"
+            echo "Searched in: tests/, tests/generated/, tests/generated_by_llm/"
           fi
 
       - name: Run pytest with coverage
         if: steps.check-tests.outputs.tests_exist == 'true'
         run: |
           mkdir -p reports
-          echo "🧪 Running existing tests with coverage..."
-          PYTHONPATH=$PWD coverage run --source=code -m pytest tests/generated --maxfail=1 --disable-warnings -q || true
+          
+          # Determine source directory for coverage
+          COVERAGE_SOURCE="${{ github.event.inputs.coverage_source || 'src/' }}"
+          
+          # Also try common source directory patterns
+          for src_dir in "$COVERAGE_SOURCE" "src/" "code/" "app/" "."; do
+            if [ -d "$src_dir" ] && [ "$(find "$src_dir" -name "*.py" -not -path "*/test*" 2>/dev/null)" ]; then
+              COVERAGE_SOURCE="$src_dir"
+              echo "📊 Using coverage source: $COVERAGE_SOURCE"
+              break
+            fi
+          done
+          
+          echo "🧪 Running tests with comprehensive coverage..."
+          echo "📍 Test locations: ${{ steps.check-tests.outputs.test_locations }}"
+          echo "📊 Coverage source: $COVERAGE_SOURCE"
+          
+          # Set Python path and run tests
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          
+          # Run tests with coverage
+          coverage run --source="$COVERAGE_SOURCE" -m pytest \
+            ${{ steps.check-tests.outputs.test_locations }} \
+            --maxfail=5 \
+            --tb=short \
+            --disable-warnings \
+            -v \
+            --junitxml=reports/junit.xml || echo "Some tests failed, but continuing..."
+          
+          # Generate coverage reports
           coverage report -m | tee reports/coverage.txt
           coverage xml -o reports/coverage.xml
-          echo "✅ Tests completed"
+          coverage html -d reports/htmlcov/
+          
+          echo "✅ Test execution completed"
 
-      - name: Upload coverage report and test files
+      - name: Upload test results and coverage
         if: steps.check-tests.outputs.tests_exist == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: standalone-test-results
+          name: test-execution-results
           path: |
             reports/
-            tests/generated/
-            tests/generated_by_llm/
+            tests/
 
-      - name: Add summary to GitHub Action
+      - name: Create Test Execution Summary
         run: |
-          echo "### 🧪 Standalone Test Runner Results" >> $GITHUB_STEP_SUMMARY
+          echo "## 🧪 Test Execution Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
           if [ "${{ steps.check-tests.outputs.tests_exist }}" = "true" ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Coverage Report:**" >> $GITHUB_STEP_SUMMARY
+            echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-            cat reports/coverage.txt >> $GITHUB_STEP_SUMMARY
+            cat reports/coverage.txt 2>/dev/null || echo "Coverage report not available"
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📊 **Artifacts Generated:**" >> $GITHUB_STEP_SUMMARY
-            echo "- \`standalone-test-results\` - Coverage reports AND LLM-generated test files" >> $GITHUB_STEP_SUMMARY
+            
+            # Add test statistics if junit report exists
+            if [ -f "reports/junit.xml" ]; then
+              echo "### 🎯 Test Statistics" >> $GITHUB_STEP_SUMMARY
+              python -c "
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse('reports/junit.xml')
+              root = tree.getroot()
+              tests = root.get('tests', '0')
+              failures = root.get('failures', '0')
+              errors = root.get('errors', '0')
+              skipped = root.get('skipped', '0')
+              passed = int(tests) - int(failures) - int(errors) - int(skipped)
+              print(f'- **Total tests:** {tests}')
+              print(f'- **Passed:** {passed}')
+              print(f'- **Failed:** {failures}')
+              print(f'- **Errors:** {errors}')
+              print(f'- **Skipped:** {skipped}')
+          except:
+              print('- Test statistics not available')
+              " >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "### 📦 Available Reports" >> $GITHUB_STEP_SUMMARY
+            echo "- **Text Coverage Report:** \`reports/coverage.txt\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **XML Coverage Report:** \`reports/coverage.xml\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **HTML Coverage Report:** \`reports/htmlcov/\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **JUnit Test Results:** \`reports/junit.xml\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📥 **Download:** \`test-execution-results\` artifact below" >> $GITHUB_STEP_SUMMARY
           else
+            echo "### ⚠️ No Tests Found" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ **No tests found to execute**" >> $GITHUB_STEP_SUMMARY
+            echo "**Searched in:** tests/, tests/generated/, tests/generated_by_llm/" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Note:** This workflow runs existing tests. To generate new tests, push code changes to trigger the main pipeline." >> $GITHUB_STEP_SUMMARY
+            echo "### 💡 Next Steps:" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Generate tests** using the LLM Test Generator workflow" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Add test files** to your repository's test directory" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Re-run this workflow** to execute the tests" >> $GITHUB_STEP_SUMMARY
           fi
