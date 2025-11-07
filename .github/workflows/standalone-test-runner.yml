@@ -1,7 +1,7 @@
-name: 🧪 Test Runner
+name: 🧪 Test Runner with Auto-Fix
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
     inputs:
       test_directory:
         description: "Test directory to run (default: tests/)"
@@ -13,8 +13,13 @@ on:
         required: false
         type: string
         default: "src/"
+      auto_fix_imports:
+        description: "Auto-fix deprecated LangChain imports"
+        required: false
+        type: boolean
+        default: true
   schedule:
-    - cron: '0 2 * * *'  # Daily at 2 AM for regression testing
+    - cron: '0 2 * * *'
 
 jobs:
   run-existing-tests:
@@ -33,13 +38,130 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Auto-fix deprecated imports
+        if: github.event.inputs.auto_fix_imports != 'false'
+        run: |
+          echo "🔧 Auto-fixing deprecated LangChain imports..."
+          
+          # Create Python script to fix imports
+          cat > fix_imports.py << 'EOF'
+          import os
+          import re
+          from pathlib import Path
+          
+          def fix_langchain_imports(file_path):
+              """Fix deprecated LangChain imports in test files"""
+              with open(file_path, 'r') as f:
+                  content = f.read()
+              
+              original_content = content
+              changes_made = []
+              
+              # Fix text_splitter imports
+              if 'from langchain.text_splitter import' in content:
+                  content = content.replace(
+                      'from langchain.text_splitter import',
+                      'from langchain_text_splitters import'
+                  )
+                  changes_made.append('text_splitter -> langchain_text_splitters')
+              
+              # Fix embeddings imports
+              if 'from langchain.embeddings import OpenAIEmbeddings' in content:
+                  content = content.replace(
+                      'from langchain.embeddings import OpenAIEmbeddings',
+                      'from langchain_openai import OpenAIEmbeddings'
+                  )
+                  changes_made.append('OpenAIEmbeddings -> langchain_openai')
+              
+              # Fix other common embeddings
+              if 'from langchain.embeddings import' in content:
+                  content = content.replace(
+                      'from langchain.embeddings import',
+                      'from langchain_community.embeddings import'
+                  )
+                  changes_made.append('embeddings -> langchain_community.embeddings')
+              
+              # Fix vectorstores imports
+              if 'from langchain.vectorstores import' in content:
+                  content = content.replace(
+                      'from langchain.vectorstores import',
+                      'from langchain_community.vectorstores import'
+                  )
+                  changes_made.append('vectorstores -> langchain_community.vectorstores')
+              
+              # Fix document_loaders imports
+              if 'from langchain.document_loaders import' in content:
+                  content = content.replace(
+                      'from langchain.document_loaders import',
+                      'from langchain_community.document_loaders import'
+                  )
+                  changes_made.append('document_loaders -> langchain_community.document_loaders')
+              
+              # Fix chat_models imports
+              if 'from langchain.chat_models import ChatOpenAI' in content:
+                  content = content.replace(
+                      'from langchain.chat_models import ChatOpenAI',
+                      'from langchain_openai import ChatOpenAI'
+                  )
+                  changes_made.append('ChatOpenAI -> langchain_openai')
+              
+              # Fix llms imports
+              if 'from langchain.llms import OpenAI' in content:
+                  content = content.replace(
+                      'from langchain.llms import OpenAI',
+                      'from langchain_openai import OpenAI'
+                  )
+                  changes_made.append('OpenAI -> langchain_openai')
+              
+              # Add missing unittest import if needed
+              if 'unittest.TestCase' in content and 'import unittest' not in content:
+                  # Add import at the top after other imports
+                  lines = content.split('\n')
+                  import_index = 0
+                  for i, line in enumerate(lines):
+                      if line.startswith('import ') or line.startswith('from '):
+                          import_index = i + 1
+                  lines.insert(import_index, 'import unittest')
+                  content = '\n'.join(lines)
+                  changes_made.append('Added missing unittest import')
+              
+              if content != original_content:
+                  with open(file_path, 'w') as f:
+                      f.write(content)
+                  return changes_made
+              return None
+          
+          def main():
+              test_dirs = ['tests/', 'tests/generated_by_llm/', 'tests/generated/']
+              total_fixed = 0
+              
+              for test_dir in test_dirs:
+                  if not os.path.exists(test_dir):
+                      continue
+                  
+                  for test_file in Path(test_dir).rglob('test_*.py'):
+                      changes = fix_langchain_imports(test_file)
+                      if changes:
+                          total_fixed += 1
+                          print(f"✅ Fixed {test_file}: {', '.join(changes)}")
+              
+              if total_fixed == 0:
+                  print("ℹ️ No deprecated imports found")
+              else:
+                  print(f"\n🎉 Fixed {total_fixed} test file(s)")
+          
+          if __name__ == '__main__':
+              main()
+          EOF
+          
+          python fix_imports.py
+
       - name: Check for existing tests
         id: check-tests
         run: |
           TEST_DIR="${{ github.event.inputs.test_directory || 'tests/' }}"
           echo "🔍 Looking for tests in: $TEST_DIR"
           
-          # Check multiple possible test locations
           FOUND_TESTS=false
           TEST_LOCATIONS=""
           
@@ -58,19 +180,75 @@ jobs:
             echo "✅ Tests found and ready to run"
           else
             echo "tests_exist=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No test files found in any location"
-            echo "Searched in: tests/, tests/generated/, tests/generated_by_llm/"
+            echo "⚠️ No test files found"
           fi
+
+      - name: Validate test imports
+        if: steps.check-tests.outputs.tests_exist == 'true'
+        run: |
+          echo "🔍 Validating test file imports..."
+          
+          cat > validate_imports.py << 'EOF'
+          import ast
+          import sys
+          from pathlib import Path
+          
+          def check_imports(file_path):
+              """Check if test file has valid imports"""
+              try:
+                  with open(file_path, 'r') as f:
+                      tree = ast.parse(f.read(), filename=str(file_path))
+                  
+                  deprecated_patterns = [
+                      'langchain.text_splitter',
+                      'langchain.embeddings',
+                      'langchain.vectorstores',
+                      'langchain.document_loaders',
+                      'langchain.chat_models',
+                      'langchain.llms'
+                  ]
+                  
+                  issues = []
+                  for node in ast.walk(tree):
+                      if isinstance(node, ast.ImportFrom):
+                          if node.module:
+                              for pattern in deprecated_patterns:
+                                  if node.module.startswith(pattern):
+                                      issues.append(f"Deprecated import: from {node.module}")
+                  
+                  return issues
+              except Exception as e:
+                  return [f"Parse error: {str(e)}"]
+          
+          test_dirs = ['tests/', 'tests/generated_by_llm/', 'tests/generated/']
+          all_issues = []
+          
+          for test_dir in test_dirs:
+              if not Path(test_dir).exists():
+                  continue
+              for test_file in Path(test_dir).rglob('test_*.py'):
+                  issues = check_imports(test_file)
+                  if issues:
+                      all_issues.extend([f"{test_file}: {issue}" for issue in issues])
+          
+          if all_issues:
+              print("⚠️ Found import issues:")
+              for issue in all_issues:
+                  print(f"  - {issue}")
+              print("\n⚠️ Some imports may still need fixing")
+          else:
+              print("✅ All imports look good!")
+          EOF
+          
+          python validate_imports.py
 
       - name: Run pytest with coverage
         if: steps.check-tests.outputs.tests_exist == 'true'
         run: |
           mkdir -p reports
           
-          # Determine source directory for coverage
           COVERAGE_SOURCE="${{ github.event.inputs.coverage_source || 'src/' }}"
           
-          # Also try common source directory patterns
           for src_dir in "$COVERAGE_SOURCE" "src/" "code/" "app/" "."; do
             if [ -d "$src_dir" ] && [ "$(find "$src_dir" -name "*.py" -not -path "*/test*" 2>/dev/null)" ]; then
               COVERAGE_SOURCE="$src_dir"
@@ -83,17 +261,20 @@ jobs:
           echo "📍 Test locations: ${{ steps.check-tests.outputs.test_locations }}"
           echo "📊 Coverage source: $COVERAGE_SOURCE"
           
-          # Set Python path and run tests
           export PYTHONPATH=$PWD:$PYTHONPATH
           
-          # Run tests with coverage
+          # Run tests with detailed output
           coverage run --source="$COVERAGE_SOURCE" -m pytest \
             ${{ steps.check-tests.outputs.test_locations }} \
             --maxfail=5 \
-            --tb=short \
+            --tb=long \
             --disable-warnings \
             -v \
-            --junitxml=reports/junit.xml || echo "Some tests failed, but continuing..."
+            -s \
+            --junitxml=reports/junit.xml 2>&1 | tee reports/pytest.log || {
+              echo "⚠️ Some tests failed, but continuing..."
+              echo "test_failures=true" >> $GITHUB_ENV
+            }
           
           # Generate coverage reports
           coverage report -m | tee reports/coverage.txt
@@ -102,16 +283,51 @@ jobs:
           
           echo "✅ Test execution completed"
 
+      - name: Analyze test failures
+        if: steps.check-tests.outputs.tests_exist == 'true' && env.test_failures == 'true'
+        run: |
+          echo "🔍 Analyzing test failures..."
+          
+          cat > analyze_failures.py << 'EOF'
+          import re
+          from collections import Counter
+          
+          try:
+              with open('reports/pytest.log', 'r') as f:
+                  log = f.read()
+              
+              # Extract error types
+              errors = re.findall(r'(ModuleNotFoundError|ImportError|NameError|AttributeError): (.+)', log)
+              
+              if errors:
+                  print("\n📊 Error Summary:")
+                  error_counts = Counter([e[0] for e in errors])
+                  for error_type, count in error_counts.most_common():
+                      print(f"  - {error_type}: {count} occurrence(s)")
+                  
+                  print("\n🔍 Specific Errors:")
+                  for error_type, message in set(errors):
+                      print(f"  - {error_type}: {message}")
+              else:
+                  print("ℹ️ No import/module errors found in logs")
+          except Exception as e:
+              print(f"⚠️ Could not analyze: {e}")
+          EOF
+          
+          python analyze_failures.py
+
       - name: Upload test results and coverage
-        if: steps.check-tests.outputs.tests_exist == 'true'
+        if: always() && steps.check-tests.outputs.tests_exist == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: test-execution-results
           path: |
             reports/
             tests/
+            fix_imports.py
 
       - name: Create Test Execution Summary
+        if: always()
         run: |
           echo "## 🧪 Test Execution Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -123,7 +339,6 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             
-            # Add test statistics if junit report exists
             if [ -f "reports/junit.xml" ]; then
               echo "### 🎯 Test Statistics" >> $GITHUB_STEP_SUMMARY
               python -c "
@@ -137,30 +352,37 @@ jobs:
               skipped = root.get('skipped', '0')
               passed = int(tests) - int(failures) - int(errors) - int(skipped)
               print(f'- **Total tests:** {tests}')
-              print(f'- **Passed:** {passed}')
-              print(f'- **Failed:** {failures}')
-              print(f'- **Errors:** {errors}')
-              print(f'- **Skipped:** {skipped}')
+              print(f'- **Passed:** {passed} ✅')
+              print(f'- **Failed:** {failures} ❌')
+              print(f'- **Errors:** {errors} ⚠️')
+              print(f'- **Skipped:** {skipped} ⏭️')
           except:
               print('- Test statistics not available')
               " >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
             fi
             
+            if [ "${{ env.test_failures }}" = "true" ]; then
+              echo "### ⚠️ Action Required" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Some tests failed. Common issues:" >> $GITHUB_STEP_SUMMARY
+              echo "1. **Import errors**: Check if all dependencies are in requirements.txt" >> $GITHUB_STEP_SUMMARY
+              echo "2. **Deprecated imports**: LangChain 0.1.x+ uses new import paths" >> $GITHUB_STEP_SUMMARY
+              echo "3. **Missing test dependencies**: Ensure pytest, mock, etc. are installed" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "📥 Download the \`test-execution-results\` artifact for detailed logs" >> $GITHUB_STEP_SUMMARY
+            fi
+            
             echo "### 📦 Available Reports" >> $GITHUB_STEP_SUMMARY
-            echo "- **Text Coverage Report:** \`reports/coverage.txt\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **XML Coverage Report:** \`reports/coverage.xml\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **HTML Coverage Report:** \`reports/htmlcov/\`" >> $GITHUB_STEP_SUMMARY
-            echo "- **JUnit Test Results:** \`reports/junit.xml\`" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "📥 **Download:** \`test-execution-results\` artifact below" >> $GITHUB_STEP_SUMMARY
+            echo "- **Coverage Report:** \`reports/coverage.txt\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **HTML Coverage:** \`reports/htmlcov/\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Test Log:** \`reports/pytest.log\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Import Fix Script:** \`fix_imports.py\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ⚠️ No Tests Found" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Searched in:** tests/, tests/generated/, tests/generated_by_llm/" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 💡 Next Steps:" >> $GITHUB_STEP_SUMMARY
             echo "1. **Generate tests** using the LLM Test Generator workflow" >> $GITHUB_STEP_SUMMARY
-            echo "2. **Add test files** to your repository's test directory" >> $GITHUB_STEP_SUMMARY
-            echo "3. **Re-run this workflow** to execute the tests" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Review and validate** the generated tests" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Push to repository** and re-run this workflow" >> $GITHUB_STEP_SUMMARY
           fi
