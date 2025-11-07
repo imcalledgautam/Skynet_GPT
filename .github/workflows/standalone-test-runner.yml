@@ -1,0 +1,74 @@
+name: Standalone Test Runner
+
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM for regression testing
+
+jobs:
+  run-existing-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check for existing tests
+        id: check-tests
+        run: |
+          if [ -d "tests/generated" ] && [ "$(ls -A tests/generated/*.py 2>/dev/null)" ]; then
+            echo "tests_exist=true" >> $GITHUB_OUTPUT
+            echo "✅ Existing tests found"
+            ls -la tests/generated/
+          else
+            echo "tests_exist=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No existing tests found"
+          fi
+
+      - name: Run pytest with coverage
+        if: steps.check-tests.outputs.tests_exist == 'true'
+        run: |
+          mkdir -p reports
+          echo "🧪 Running existing tests with coverage..."
+          PYTHONPATH=$PWD coverage run --source=code -m pytest tests/generated --maxfail=1 --disable-warnings -q || true
+          coverage report -m | tee reports/coverage.txt
+          coverage xml -o reports/coverage.xml
+          echo "✅ Tests completed"
+
+      - name: Upload coverage report and test files
+        if: steps.check-tests.outputs.tests_exist == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-test-results
+          path: |
+            reports/
+            tests/generated/
+            tests/generated_by_llm/
+
+      - name: Add summary to GitHub Action
+        run: |
+          echo "### 🧪 Standalone Test Runner Results" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.check-tests.outputs.tests_exist }}" = "true" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Coverage Report:**" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            cat reports/coverage.txt >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "📊 **Artifacts Generated:**" >> $GITHUB_STEP_SUMMARY
+            echo "- \`standalone-test-results\` - Coverage reports AND LLM-generated test files" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **No tests found to execute**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Note:** This workflow runs existing tests. To generate new tests, push code changes to trigger the main pipeline." >> $GITHUB_STEP_SUMMARY
+          fi
